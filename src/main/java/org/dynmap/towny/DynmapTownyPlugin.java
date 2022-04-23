@@ -1,17 +1,11 @@
 package org.dynmap.towny;
 
 import java.io.IOException;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import com.palmergames.bukkit.towny.TownyUniverse;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
@@ -24,8 +18,8 @@ import org.bukkit.event.server.PluginEnableEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.PluginManager;
-import org.dynmap.DynmapAPI;
-import org.dynmap.DynmapWebChatEvent;
+import org.dynmap.DynmapCommonAPI;
+import org.dynmap.DynmapCommonAPIListener;
 import org.dynmap.markers.AreaMarker;
 import org.dynmap.markers.Marker;
 import org.dynmap.markers.MarkerAPI;
@@ -40,7 +34,7 @@ import com.palmergames.bukkit.towny.object.Resident;
 import com.palmergames.bukkit.towny.object.Town;
 import com.palmergames.bukkit.towny.object.TownBlock;
 import com.palmergames.bukkit.towny.object.TownBlockType;
-import com.palmergames.bukkit.towny.object.TownyUniverse;
+import com.palmergames.bukkit.towny.TownyUniverse;
 import com.palmergames.bukkit.towny.object.TownyWorld;
 
 import com.palmergames.bukkit.TownyChat.Chat;
@@ -49,8 +43,9 @@ public class DynmapTownyPlugin extends JavaPlugin {
     private static Logger log;
     private static final String DEF_INFOWINDOW = "<div class=\"infowindow\"><span style=\"font-size:120%;\">%regionname% (%nation%)</span><br /> Mayor <span style=\"font-weight:bold;\">%playerowners%</span><br /> Associates <span style=\"font-weight:bold;\">%playermanagers%</span><br/>Flags<br /><span style=\"font-weight:bold;\">%flags%</span></div>";
     private static final String NATION_NONE = "_none_";
+    protected static DynmapTownyPlugin instance;
     Plugin dynmap;
-    DynmapAPI api;
+    DynmapCommonAPI api;
     MarkerAPI markerapi;
     Towny towny;
     TownyUniverse tuniv;
@@ -79,7 +74,11 @@ public class DynmapTownyPlugin extends JavaPlugin {
     boolean chat_sendlogin;
     boolean chat_sendquit;
     String chatformat;
-    
+
+    DynmapTownyPlugin(){
+        DynmapTownyPlugin.instance = this;
+    }
+
     @Override
     public void onLoad() {
         log = this.getLogger();
@@ -322,7 +321,7 @@ public class DynmapTownyPlugin extends JavaPlugin {
     
     private void updateTown(Town town) {
         if(!playersbytown) return;
-        Set<String> plids = new HashSet<String>();
+        Set<String> plids = new HashSet<>();
         List<Resident> res = town.getResidents();
         for(Resident r : res) {
             plids.add(r.getName());
@@ -414,7 +413,7 @@ public class DynmapTownyPlugin extends JavaPlugin {
     private String formatInfoWindow(Town town, TownBlockType btype) {
         String v = "<div class=\"regioninfo\">"+infowindow+"</div>";
         if(btype != null)
-            v = v.replace("%regionname%", town.getName() + "(" + btype.toString() + ")");
+            v = v.replace("%regionname%", town.getName() + "(" + btype + ")");
         else
             v = v.replace("%regionname%", town.getName());
         v = v.replace("%playerowners%", town.hasMayor()?town.getMayor().getName():"");
@@ -534,7 +533,7 @@ public class DynmapTownyPlugin extends JavaPlugin {
         int poly_index = 0; /* Index of polygon for given town */
                 
         /* Handle areas */
-    	List<TownBlock> blocks = town.getTownBlocks();
+    	Collection<TownBlock> blocks = town.getTownBlocks();
     	if(blocks.isEmpty())
     	    return;
         /* Build popup */
@@ -758,7 +757,7 @@ public class DynmapTownyPlugin extends JavaPlugin {
         Map<String,Marker> newmark = new HashMap<String,Marker>(); /* Build new map */
         
         /* Loop through towns */
-        List<Town> towns = TownyUniverse.getDataSource().getTowns();
+        List<Town> towns = TownyUniverse.getInstance().getDataSource().getTowns();
         for(Town t : towns) {
     		handleTown(t, newmap, newmark, null);
     		if(show_shops) {
@@ -786,6 +785,13 @@ public class DynmapTownyPlugin extends JavaPlugin {
         resmark = newmark;
                 
     }
+
+    public void onWebchatEvent(String name, String message) {
+        if(using_townychat && !chatformat.isEmpty()) {
+            String msg = chatformat.replace("&color;", "\u00A7").replace("%playername%", name).replace("%message%", message);
+            getServer().broadcastMessage(msg);
+        }
+    }
     
     private class OurServerListener implements Listener {
         @EventHandler(priority=EventPriority.MONITOR)
@@ -804,21 +810,10 @@ public class DynmapTownyPlugin extends JavaPlugin {
         }
 
         @EventHandler(priority = EventPriority.MONITOR)
-        public void onWebchatEvent(DynmapWebChatEvent event) {
-            if(using_townychat && !chatformat.isEmpty()) {
-                if(!event.isCancelled() && !event.isProcessed()) {
-                    event.setProcessed();
-                    String msg = chatformat.replace("&color;", "\u00A7").replace("%playername%", event.getName()).replace("%message%", event.getMessage());
-                    getServer().broadcastMessage(msg);
-                }
-            }
-        }
-
-        @EventHandler(priority = EventPriority.MONITOR)
         public void onPlayerLogin(PlayerLoginEvent event) {
             if(chat_sendlogin && using_townychat && event.getResult() == PlayerLoginEvent.Result.ALLOWED) {
                 Player player = event.getPlayer();
-                api.postPlayerJoinQuitToWeb(player, true);
+                api.postPlayerJoinQuitToWeb(player.getName(), player.getDisplayName(), true);
             }
         }
 
@@ -826,7 +821,7 @@ public class DynmapTownyPlugin extends JavaPlugin {
         public void onPlayerQuit(PlayerQuitEvent event) {
             if(chat_sendquit && using_townychat) {
                 Player player = event.getPlayer();
-                api.postPlayerJoinQuitToWeb(player, false);
+                api.postPlayerJoinQuitToWeb(player.getName(), player.getDisplayName(), false);
             }
         }
         /*
@@ -867,7 +862,8 @@ public class DynmapTownyPlugin extends JavaPlugin {
             severe("Cannot find dynmap!");
             return;
         }
-        api = (DynmapAPI)dynmap; /* Get API */
+        DynmapCommonAPIListener.register(new org.dynmap.towny.Listener());
+
         /* Get Towny */
         Plugin p = pm.getPlugin("Towny");
         if(p == null) {
@@ -910,7 +906,7 @@ public class DynmapTownyPlugin extends JavaPlugin {
             return;
         }
         /* Connect to towny API */
-        tuniv = towny.getTownyUniverse();
+        tuniv = TownyUniverse.getInstance();
         townblocksize = Coord.getCellSize();
         
         /* Load configuration */
